@@ -1,0 +1,5 @@
+python-telegram-bot==22.8
+yadisk==3.4.1
+httpx==0.28.1
+truststore==0.10.4
+gunicorn==23.0.0
