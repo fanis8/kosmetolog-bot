@@ -308,14 +308,29 @@ def build_app():
 
 
 # --- Flask-приложение для вебхука (Render) ---
+import asyncio
+import threading
+
 _app = None
+_loop = None
+_started = False
 flask_app = Flask(__name__)
 
 
 def get_app():
-    global _app
+    global _app, _loop, _started
     if _app is None:
         _app = build_app()
+        _loop = asyncio.new_event_loop()
+
+        async def _run():
+            await _app.initialize()
+            await _app.start()
+            _loop.run_forever()
+
+        threading.Thread(target=_run, daemon=True).start()
+        _started = True
+        print("PTB Application запущен в фоне (initialize+start)")
     return _app
 
 
@@ -328,8 +343,17 @@ def health():
 def webhook():
     app = get_app()
     update = Update.de_json(request.get_json(force=True), app.bot)
-    from telegram.ext import ContextTypes
-    app.update_queue.put_nowait(update)
+
+    # Кладём апдейт в очередь — обрабатывается в фоновом asyncio-цикле
+    async def _feed():
+        await app.update_queue.put(update)
+
+    future = asyncio.run_coroutine_threadsafe(_feed(), _loop)
+    try:
+        future.result(timeout=30)
+    except Exception as e:
+        print(f"Ошибка подачи update: {e}")
+        return "ERR", 500
     return "OK", 200
 
 
@@ -359,6 +383,9 @@ def _register_webhook():
 
 
 _register_webhook()
+
+# Инициализируем PTB Application при старте (до первого запроса)
+get_app()
 
 
 # --- gunicorn entrypoint ---
