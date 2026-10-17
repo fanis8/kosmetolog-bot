@@ -323,14 +323,17 @@ def get_app():
         _app = build_app()
         _loop = asyncio.new_event_loop()
 
-        async def _run():
+        async def _init():
             await _app.initialize()
-            await _app.start()
+
+        def _thread_target():
+            asyncio.set_event_loop(_loop)
+            _loop.run_until_complete(_init())
             _loop.run_forever()
 
-        threading.Thread(target=_run, daemon=True).start()
+        threading.Thread(target=_thread_target, daemon=True).start()
         _started = True
-        print("PTB Application запущен в фоне (initialize+start)")
+        print("PTB Application инициализирован (initialize)")
     return _app
 
 
@@ -344,15 +347,15 @@ def webhook():
     app = get_app()
     update = Update.de_json(request.get_json(force=True), app.bot)
 
-    # Кладём апдейт в очередь — обрабатывается в фоновом asyncio-цикле
-    async def _feed():
-        await app.update_queue.put(update)
+    # Обрабатываем апдейт в фоновом asyncio-цикле напрямую
+    async def _process():
+        await app.process_update(update)
 
-    future = asyncio.run_coroutine_threadsafe(_feed(), _loop)
+    future = asyncio.run_coroutine_threadsafe(_process(), _loop)
     try:
         future.result(timeout=30)
     except Exception as e:
-        print(f"Ошибка подачи update: {e}")
+        print(f"Ошибка обработки update: {e}")
         return "ERR", 500
     return "OK", 200
 
