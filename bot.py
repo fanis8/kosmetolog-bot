@@ -1,4 +1,5 @@
 import re
+import json
 import logging
 
 import truststore
@@ -9,6 +10,7 @@ from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     filters, ContextTypes
 )
+from flask import Flask, request
 
 from config import TELEGRAM_TOKEN, TG_BOT_USERNAME, BOOK_AUTHOR, BOOK_TITLE
 from video_index import load_index, find_by_page, find_one, search_by_text
@@ -213,7 +215,6 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     index = load_index()
 
-    # Попробуем формат страница-номер
     m = PAGE_NUM_PATTERN.match(text)
     if m:
         page, seq = m.group(1), int(m.group(2))
@@ -230,7 +231,6 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(resp, reply_markup=InlineKeyboardMarkup(kb) if kb else None, parse_mode="Markdown")
             return
         else:
-            # Определим, что именно неверно
             page_exists = str(page) in index["pages"]
             seq_exists = False
             if page_exists:
@@ -242,7 +242,6 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             if not seq_exists:
                 parts_err.append(f"видео №{seq} на странице {page} не существует")
             msg = "❌ Ошибка: " + ", ".join(parts_err) + "."
-            # Если неверная страница, покажем какие есть
             if not page_exists:
                 pages = sorted(index["pages"].keys(), key=int)
                 msg += f"\n\nДоступные страницы: {', '.join(p[:3] for p in pages)}…" if len(pages) > 10 else f"\n\nДоступные страницы: {', '.join(pages)}"
@@ -252,7 +251,6 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(msg, parse_mode="Markdown")
             return
 
-    # Попробуем номер страницы
     m = PAGE_PATTERN.match(text)
     if m:
         page = m.group(1)
@@ -270,7 +268,6 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"❌ Страница «{page}» не найдена.")
             return
 
-    # Поиск по тексту
     results = search_by_text(index, text)
     if results:
         resp = f"🔍 **Результаты по «{text}»** — {len(results)}\n\n"
@@ -310,40 +307,59 @@ def build_app():
     return app
 
 
-def main():
-    import os
-
-    app = build_app()
-
-    # Режим webhook для облачного хостинга (Render)
-    # Если заданы PORT и WEBHOOK_URL — работаем через webhook
-    port = int(os.environ.get("PORT", "8000"))
-    webhook_url = os.environ.get("WEBHOOK_URL", "")
-    secret = os.environ.get("WEBHOOK_SECRET", "")
-
-    if webhook_url:
-        print(f"Запуск через webhook на порту {port}...")
-        base = webhook_url.rstrip("/")
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path="webhook",
-            webhook_url=f"{base}/webhook",
-            secret_token=secret or None,
-            drop_pending_updates=True,
-        )
-    else:
-        # Локальный режим через polling
-        print("Запуск через polling...")
-        import time
-        while True:
-            try:
-                app.run_polling(drop_pending_updates=True)
-                break
-            except Exception as e:
-                print(f"Бот упал ({e}), перезапуск через 5с...")
-                time.sleep(5)
+# --- Flask-приложение для вебхука (Render) ---
+_app = None
+flask_app = Flask(__name__)
 
 
-if __name__ == "__main__":
-    main()
+def get_app():
+    global _app
+    if _app is None:
+        _app = build_app()
+    return _app
+
+
+@flask_app.route("/", methods=["GET"])
+def health():
+    return "OK", 200
+
+
+@flask_app.route("/webhook", methods=["POST"])
+def webhook():
+    app = get_app()
+    update = Update.de_json(request.get_json(force=True), app.bot)
+    from telegram.ext import ContextTypes
+    app.update_queue.put_nowait(update)
+    return "OK", 200
+
+
+# При старте регистрируем вебхук на Render
+import os
+
+
+def _register_webhook():
+    import urllib.request
+    import urllib.parse
+
+    base = os.environ.get("WEBHOOK_URL", "").rstrip("/")
+    if not base:
+        print("WEBHOOK_URL не задан, вебхук не регистрируется")
+        return
+    url = f"{base}/webhook"
+    data = urllib.parse.urlencode({"url": url}).encode()
+    req = urllib.request.Request(
+        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook",
+        data=data,
+    )
+    try:
+        urllib.request.urlopen(req, timeout=30)
+        print(f"Webhook зарегистрирован: {url}")
+    except Exception as e:
+        print(f"Ошибка регистрации webhook: {e}")
+
+
+_register_webhook()
+
+
+# --- gunicorn entrypoint ---
+app = flask_app
