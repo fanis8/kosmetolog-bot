@@ -1,4 +1,6 @@
 python-telegram-bot[webhooks]==22.8
+flask==3.0.3
+gunicorn==23.0.0
 yadisk==3.4.1
 httpx==0.28.1
 truststore==0.10.4
