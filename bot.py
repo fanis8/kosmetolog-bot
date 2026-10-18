@@ -10,7 +10,6 @@ from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     filters, ContextTypes
 )
-from flask import Flask, request
 
 from config import TELEGRAM_TOKEN, TG_BOT_USERNAME, BOOK_AUTHOR, BOOK_TITLE
 from video_index import load_index, find_by_page, find_one, search_by_text
@@ -307,89 +306,32 @@ def build_app():
     return app
 
 
-# --- Flask-приложение для вебхука (Render) ---
-import asyncio
-import threading
-
-_app = None
-_loop = None
-_started = False
-flask_app = Flask(__name__)
-
-
-def get_app():
-    global _app, _loop, _started
-    if _app is None:
-        _app = build_app()
-        _loop = asyncio.new_event_loop()
-
-        async def _init():
-            await _app.initialize()
-
-        def _thread_target():
-            asyncio.set_event_loop(_loop)
-            _loop.run_until_complete(_init())
-            _loop.run_forever()
-
-        threading.Thread(target=_thread_target, daemon=True).start()
-        _started = True
-        print("PTB Application инициализирован (initialize)")
-    return _app
-
-
-@flask_app.route("/", methods=["GET"])
-def health():
-    return "OK", 200
-
-
-@flask_app.route("/webhook", methods=["POST"])
-def webhook():
-    app = get_app()
-    update = Update.de_json(request.get_json(force=True), app.bot)
-
-    # Обрабатываем апдейт в фоновом asyncio-цикле напрямую
-    async def _process():
-        await app.process_update(update)
-
-    future = asyncio.run_coroutine_threadsafe(_process(), _loop)
-    try:
-        future.result(timeout=30)
-    except Exception as e:
-        print(f"Ошибка обработки update: {e}")
-        return "ERR", 500
-    return "OK", 200
-
-
-# При старте регистрируем вебхук на Render
-import os
-
-
-def _register_webhook():
+def main():
+    import os
+    import time
     import urllib.request
-    import urllib.parse
 
-    base = os.environ.get("WEBHOOK_URL", "").rstrip("/")
-    if not base:
-        print("WEBHOOK_URL не задан, вебхук не регистрируется")
-        return
-    url = f"{base}/webhook"
-    data = urllib.parse.urlencode({"url": url}).encode()
-    req = urllib.request.Request(
-        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook",
-        data=data,
-    )
+    app = build_app()
+
+    # Удаляем webhook, если он был (чтобы polling работал)
     try:
-        urllib.request.urlopen(req, timeout=30)
-        print(f"Webhook зарегистрирован: {url}")
+        urllib.request.urlopen(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteWebhook?drop_pending_updates=true",
+            timeout=30,
+        )
+        print("Webhook удалён")
     except Exception as e:
-        print(f"Ошибка регистрации webhook: {e}")
+        print(f"Ошибка удаления webhook: {e}")
+
+    print("Запуск через polling...")
+    while True:
+        try:
+            app.run_polling(drop_pending_updates=True)
+            break
+        except Exception as e:
+            print(f"Бот упал ({e}), перезапуск через 5с...")
+            time.sleep(5)
 
 
-_register_webhook()
-
-# Инициализируем PTB Application при старте (до первого запроса)
-get_app()
-
-
-# --- gunicorn entrypoint ---
-app = flask_app
+if __name__ == "__main__":
+    main()
