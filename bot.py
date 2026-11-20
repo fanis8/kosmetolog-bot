@@ -331,6 +331,18 @@ def main():
 
     app = build_app()
 
+    # Настраиваем кнопку "Меню" с командами (отображается в поле ввода)
+    import asyncio
+    from telegram import BotCommand
+    try:
+        asyncio.run(app.bot.set_my_commands([
+            BotCommand("start", "Начать / главное меню"),
+            BotCommand("help", "Помощь"),
+        ]))
+        print("Меню бота настроено")
+    except Exception as e:
+        print(f"Ошибка настройки меню: {e}")
+
     # Удаляем webhook, если он был (чтобы polling работал)
     try:
         urllib.request.urlopen(
