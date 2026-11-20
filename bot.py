@@ -331,14 +331,22 @@ def main():
 
     app = build_app()
 
-    # Настраиваем кнопку "Меню" с командами (отображается в поле ввода)
-    import asyncio
-    from telegram import BotCommand
+    # Настраиваем кнопку "Меню" с командами (отображается в поле ввода).
+    # Используем urllib (синхронно, свой отдельный поток) вместо asyncio.run,
+    # чтобы не закрывать event loop, который использует PTB для polling.
+    import json
     try:
-        asyncio.run(app.bot.set_my_commands([
-            BotCommand("start", "Начать / главное меню"),
-            BotCommand("help", "Помощь"),
-        ]))
+        commands = [
+            {"command": "start", "description": "Начать / главное меню"},
+            {"command": "help", "description": "Помощь"},
+        ]
+        req = urllib.request.Request(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setMyCommands",
+            data=json.dumps({"commands": commands}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            resp.read()
         print("Меню бота настроено")
     except Exception as e:
         print(f"Ошибка настройки меню: {e}")
