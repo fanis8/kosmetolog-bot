@@ -41,7 +41,7 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     pages = len(index["pages"])
 
     kb = [
-        [InlineKeyboardButton("🔍 Поиск по тексту", switch_inline_query_current_chat="")],
+        [InlineKeyboardButton("🔍 Поиск по тексту", callback_data="search_text")],
         [InlineKeyboardButton("📂 По страницам", callback_data="menu_pages")],
         [InlineKeyboardButton("🏷 Категории", callback_data="menu_categories")],
         [InlineKeyboardButton("❓ Помощь", callback_data="help")],
@@ -198,7 +198,7 @@ async def back_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     total = len(index["videos"])
     pages = len(index["pages"])
     kb = [
-        [InlineKeyboardButton("🔍 Поиск по тексту", switch_inline_query_current_chat="")],
+        [InlineKeyboardButton("🔍 Поиск по тексту", callback_data="search_text")],
         [InlineKeyboardButton("📂 По страницам", callback_data="menu_pages")],
         [InlineKeyboardButton("🏷 Категории", callback_data="menu_categories")],
         [InlineKeyboardButton("❓ Помощь", callback_data="help")],
@@ -208,6 +208,19 @@ async def back_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"Введите текст, номер (44-1) или выберите раздел."
     )
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
+
+async def search_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    text = (
+        "🔍 **Поиск по тексту**\n\n"
+        "Просто напишите слово или фразу в поле ввода ниже и отправьте.\n\n"
+        "Например:\n"
+        "`губы`, `ботокс`, `Restylane`, `скулы`, `подбородок`\n\n"
+        "Также можно искать по номеру видео в формате `44-1`."
+    )
+    await query.edit_message_text(text, parse_mode="Markdown")
 
 
 async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -298,6 +311,7 @@ def build_app():
     app.add_handler(CallbackQueryHandler(menu_pages, pattern="^menu_pages$"))
     app.add_handler(CallbackQueryHandler(menu_categories, pattern="^menu_categories$"))
     app.add_handler(CallbackQueryHandler(back_start, pattern="^back_start$"))
+    app.add_handler(CallbackQueryHandler(search_text, pattern="^search_text$"))
     app.add_handler(CallbackQueryHandler(help_handler, pattern="^help$"))
     app.add_handler(CallbackQueryHandler(show_page, pattern=r"^page_\d+$"))
     app.add_handler(CallbackQueryHandler(show_category, pattern=r"^cat_"))
