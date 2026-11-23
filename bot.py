@@ -35,6 +35,37 @@ def build_menu(buttons, cols=2):
     return [buttons[i:i+cols] for i in range(0, len(buttons), cols)]
 
 
+# chat_id -> message_id последнего сообщения в чате (для решения: править или отвечать новым)
+_last_msg_id = {}
+
+
+def _track_message(chat_id, message_id):
+    _last_msg_id[chat_id] = message_id
+
+
+async def _answer_callback(update, text, reply_markup=None, parse_mode="Markdown"):
+    """Отвечает на нажатие кнопки: если сообщение уже не последнее — новым сообщением,
+    иначе правит текущее."""
+    query = update.callback_query
+    chat_id = query.message.chat_id
+    msg_id = query.message.message_id
+    last = _last_msg_id.get(chat_id)
+    if last is not None and msg_id < last:
+        sent = await query.message.reply_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+        if sent:
+            _track_message(chat_id, sent.message_id)
+    else:
+        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+
+
+async def _reply_track(reply_to, text, reply_markup=None, parse_mode="Markdown"):
+    """Отправляет новое сообщение и запоминает его как последнее."""
+    sent = await reply_to.reply_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+    if sent:
+        _track_message(reply_to.chat_id, sent.message_id)
+    return sent
+
+
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     index = load_index()
     total = len(index["videos"])
@@ -57,7 +88,9 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"🏷 *Категории* — готовые подборки по темам\n\n"
         f"Попробуйте!"
     )
-    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+    sent = await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+    if sent:
+        _track_message(update.effective_chat.id, sent.message_id)
 
 
 async def help_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -76,7 +109,7 @@ async def help_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if query:
         await query.answer()
-        await query.edit_message_text(text, parse_mode="Markdown")
+        await _answer_callback(update, text)
     else:
         await update.message.reply_text(text, parse_mode="Markdown")
 
@@ -92,7 +125,7 @@ async def menu_pages(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         btns.append(InlineKeyboardButton(f"Стр. {p} ({count})", callback_data=f"page_{p}"))
     menu = build_menu(btns, 3)
     menu.append([InlineKeyboardButton("◀ Назад", callback_data="back_start")])
-    await query.edit_message_text("📂 **Выберите страницу:**", reply_markup=InlineKeyboardMarkup(menu), parse_mode="Markdown")
+    await _answer_callback(update, "📂 **Выберите страницу:**", reply_markup=InlineKeyboardMarkup(menu))
 
 
 async def menu_categories(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -103,7 +136,7 @@ async def menu_categories(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         btns.append(InlineKeyboardButton(name, callback_data=f"cat_{name}"))
     menu = build_menu(btns, 2)
     menu.append([InlineKeyboardButton("◀ Назад", callback_data="back_start")])
-    await query.edit_message_text("🏷 **Выберите категорию:**", reply_markup=InlineKeyboardMarkup(menu), parse_mode="Markdown")
+    await _answer_callback(update, "🏷 **Выберите категорию:**", reply_markup=InlineKeyboardMarkup(menu))
 
 
 async def show_page(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -113,7 +146,7 @@ async def show_page(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     index = load_index()
     videos = find_by_page(index, page)
     if not videos:
-        await query.edit_message_text(f"Страница {page} не найдена.")
+        await _answer_callback(update, f"Страница {page} не найдена.")
         return
 
     text = f"📂 **Страница {page}** — {len(videos)} видео\n\n"
@@ -125,7 +158,7 @@ async def show_page(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     menu = build_menu(btns, 1)
     menu.append([InlineKeyboardButton("◀ К страницам", callback_data="menu_pages")])
     menu.append([InlineKeyboardButton("◀ На главную", callback_data="back_start")])
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(menu), parse_mode="Markdown")
+    await _answer_callback(update, text, reply_markup=InlineKeyboardMarkup(menu))
 
 
 async def show_category(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -138,7 +171,7 @@ async def show_category(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             keywords = kw
             break
     if not keywords:
-        await query.edit_message_text("Категория не найдена.")
+        await _answer_callback(update, "Категория не найдена.")
         return
 
     index = load_index()
@@ -150,7 +183,7 @@ async def show_category(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 results.append(v)
                 break
     if not results:
-        await query.edit_message_text(f"По категории «{cat_name}» ничего не найдено.")
+        await _answer_callback(update, f"По категории «{cat_name}» ничего не найдено.")
         return
 
     text = f"🏷 **{cat_name}** — {len(results)} видео\n\n"
@@ -161,7 +194,7 @@ async def show_category(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     menu = build_menu(btns, 1)
     menu.append([InlineKeyboardButton("◀ К категориям", callback_data="menu_categories")])
     menu.append([InlineKeyboardButton("◀ На главную", callback_data="back_start")])
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(menu), parse_mode="Markdown")
+    await _answer_callback(update, text, reply_markup=InlineKeyboardMarkup(menu))
 
 
 async def show_video(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -172,7 +205,7 @@ async def show_video(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     index = load_index()
     v = find_one(index, page, seq)
     if not v:
-        await query.edit_message_text("Видео не найдено.")
+        await _answer_callback(update, "Видео не найдено.")
         return
 
     text = (
@@ -188,7 +221,7 @@ async def show_video(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         text += "\n⚠ Ссылка ещё не загружена."
     btns.append(InlineKeyboardButton("◀ Назад", callback_data=f"page_{v['page']}"))
     btns.append(InlineKeyboardButton("◀ На главную", callback_data="back_start"))
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(build_menu(btns, 1)), parse_mode="Markdown")
+    await _answer_callback(update, text, reply_markup=InlineKeyboardMarkup(build_menu(btns, 1)))
 
 
 async def back_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -207,7 +240,7 @@ async def back_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"👋 Добро пожаловать! В базе **{total} видео** на **{pages} страницах**.\n\n"
         f"Введите текст, номер (44-1) или выберите раздел."
     )
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+    await _answer_callback(update, text, reply_markup=InlineKeyboardMarkup(kb))
 
 
 async def search_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -220,7 +253,7 @@ async def search_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "`губы`, `ботокс`, `Restylane`, `скулы`, `подбородок`\n\n"
         "Также можно искать по номеру видео в формате `44-1`."
     )
-    await query.edit_message_text(text, parse_mode="Markdown")
+    await _answer_callback(update, text)
 
 
 async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -240,7 +273,7 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             kb = []
             if v.get("yandex_url"):
                 kb.append([InlineKeyboardButton("▶ Смотреть", url=v["yandex_url"])])
-            await update.message.reply_text(resp, reply_markup=InlineKeyboardMarkup(kb) if kb else None, parse_mode="Markdown")
+            await _reply_track(update.message, resp, reply_markup=InlineKeyboardMarkup(kb) if kb else None)
             return
         else:
             page_exists = str(page) in index["pages"]
@@ -260,7 +293,7 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             else:
                 nums = [str(x["num"]) for x in index["pages"][str(page)]]
                 msg += f"\n\nНа странице {page} есть видео: {', '.join(nums)}"
-            await update.message.reply_text(msg, parse_mode="Markdown")
+            await _reply_track(update.message, msg)
             return
 
     m = PAGE_PATTERN.match(text)
@@ -274,10 +307,10 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 resp += f"  {v['num']}. {v['desc']}\n"
                 btns.append(InlineKeyboardButton(f"{v['num']}. {v['desc']}", callback_data=f"vid_{page}_{v['num']}"))
             menu = build_menu(btns, 1)
-            await update.message.reply_text(resp, reply_markup=InlineKeyboardMarkup(menu), parse_mode="Markdown")
+            await _reply_track(update.message, resp, reply_markup=InlineKeyboardMarkup(menu))
             return
         else:
-            await update.message.reply_text(f"❌ Страница «{page}» не найдена.")
+            await _reply_track(update.message, f"❌ Страница «{page}» не найдена.")
             return
 
     results = search_by_text(index, text)
@@ -288,9 +321,10 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             resp += f"  Стр.{v['page']} — {v['desc']}\n"
             btns.append(InlineKeyboardButton(f"Стр.{v['page']} — {v['desc']}", callback_data=f"vid_{v['page']}_{v['seq']}"))
         menu = build_menu(btns, 1)
-        await update.message.reply_text(resp, reply_markup=InlineKeyboardMarkup(menu), parse_mode="Markdown")
+        await _reply_track(update.message, resp, reply_markup=InlineKeyboardMarkup(menu))
     else:
-        await update.message.reply_text(
+        await _reply_track(
+            update.message,
             f"❌ По запросу «{text}» ничего не найдено.\n"
             "Попробуйте: губы, ботокс, Restylane, скулы, 44-1"
         )
